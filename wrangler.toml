@@ -1,0 +1,14 @@
+name = "github-of-life"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+
+[[kv_namespaces]]
+binding = "GOL_STATE"
+id = "c2b263d73c6c40488a98b98c861e815e"
+
+[triggers]
+crons = ["* * * * *", "0 0 * * *"]
+
+# Secrets (set via `wrangler secret put`):
+#   GITHUB_TOKEN  - PAT with `repo` scope
+#   GITHUB_USER   - "csmb"

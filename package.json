@@ -1,0 +1,14 @@
+{
+  "name": "github-of-life",
+  "version": "1.0.0",
+  "description": "Conway's Game of Life on the GitHub contribution graph",
+  "type": "module",
+  "main": "worker.js",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "seed": "node seed.js"
+  },
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
+}
