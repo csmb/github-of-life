@@ -83,6 +83,7 @@ async function ghFetch(path, method, body, token) {
     const text = await res.text();
     throw new Error(`GitHub ${method} ${path} → ${res.status}: ${text}`);
   }
+  if (res.status === 204) return null;
   return res.json();
 }
 
@@ -160,6 +161,29 @@ const GLIDER_SEED = (() => {
   [[25,1],[26,2],[24,3],[25,3],[26,3]].forEach(([c,r]) => { cells[idx(c,r)] = true; });
   return cells;
 })();
+
+async function deleteAndRecreateRepo(token, user) {
+  // Delete — contribution credits are removed when the repo is gone
+  await ghFetch(`/repos/${user}/${REPO}`, "DELETE", null, token);
+  console.log("Repo deleted.");
+
+  // Recreate
+  await ghFetch("/user/repos", "POST", {
+    name: REPO,
+    private: false,
+    auto_init: false,
+    description: "Conway's Game of Life on the GitHub contribution graph",
+  }, token);
+  console.log("Repo recreated.");
+
+  // Bootstrap main with README so the branch exists for force-push
+  const content = btoa("github-of-life: Conway's Game of Life on the GitHub contribution graph\n");
+  await ghFetch(`/repos/${user}/${REPO}/contents/README.md`, "PUT", {
+    message: "GoL seed: initialize repo",
+    content,
+  }, token);
+  console.log("main branch initialized.");
+}
 
 async function fetchNaturalContributions(token, user) {
   const now = new Date();
@@ -289,12 +313,13 @@ async function runTick(env) {
 export default {
   async scheduled(event, env, ctx) {
     if (event.cron === "0 0 * * *") {
-      // Daily reseed from real GitHub contributions
+      // Daily reset: wipe repo to clear contribution credits, then reseed
       const token = env.GITHUB_TOKEN;
       const user = env.GITHUB_USER;
+      await deleteAndRecreateRepo(token, user);
       const cells = await fetchNaturalContributions(token, user);
       await env.GOL_STATE.put("state", JSON.stringify({ generation: 0, cells }));
-      console.log(`Reseeded from contributions: ${cells.filter(Boolean).length} alive cells`);
+      console.log(`Daily reset complete: reseeded with ${cells.filter(Boolean).length} alive cells`);
     } else {
       // Per-minute GoL tick
       await runTick(env);
