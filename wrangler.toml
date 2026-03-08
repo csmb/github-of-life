@@ -7,7 +7,7 @@ binding = "GOL_STATE"
 id = "c2b263d73c6c40488a98b98c861e815e"
 
 [triggers]
-crons = ["* * * * *", "0 0 * * *"]
+crons = ["*/15 * * * *", "0 0 * * *"]
 
 # Secrets (set via `wrangler secret put`):
 #   GITHUB_TOKEN  - PAT with `repo` scope
