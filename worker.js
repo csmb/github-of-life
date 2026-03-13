@@ -308,22 +308,28 @@ async function runTick(env) {
   }
   aliveDates.sort();
 
-  // 4. Rewrite commit history (or reseed on extinction)
+  // 4. Delete and recreate repo for a clean slate, then push alive cells.
+  // Force-pushing orphans old commits but GitHub keeps crediting them until
+  // the repo is deleted — so we delete every tick to ensure dead cells truly
+  // disappear from the contribution graph.
+  const newTreeSha = await deleteAndRecreateRepo(token, user);
+  const activeSha = newTreeSha || treeSha;
+
   if (aliveDates.length === 0) {
     // All cells dead — auto-reseed from natural contributions
     console.log(`Generation ${state.generation + 1}: extinction. Reseeding...`);
     const reseeded = await fetchNaturalContributions(token, user);
     await env.GOL_STATE.put(
       "state",
-      JSON.stringify({ generation: 0, cells: reseeded, treeSha })
+      JSON.stringify({ generation: 0, cells: reseeded, treeSha: activeSha })
     );
     console.log(`Reseeded with ${reseeded.filter(Boolean).length} alive cells.`);
     return;
   }
 
-  let sha = await createRootCommit(aliveDates[0], token, user, userId, treeSha);
+  let sha = await createRootCommit(aliveDates[0], token, user, userId, activeSha);
   for (let i = 1; i < aliveDates.length; i++) {
-    sha = await createCommit(aliveDates[i], sha, token, user, userId, treeSha);
+    sha = await createCommit(aliveDates[i], sha, token, user, userId, activeSha);
   }
   await forceUpdateRef(sha, token, user);
   console.log(`Generation ${state.generation + 1}: painted ${aliveDates.length} cells. HEAD=${sha}`);
@@ -338,13 +344,15 @@ async function runTick(env) {
 export default {
   async scheduled(event, env, ctx) {
     if (event.cron === "0 0 * * *") {
-      // Daily reset: wipe repo to clear contribution credits, then reseed
+      // Daily reseed: refresh GoL state from natural contributions.
+      // No need to delete the repo — each tick now does that for a clean slate.
       const token = env.GITHUB_TOKEN;
       const user = env.GITHUB_USER;
-      const treeSha = await deleteAndRecreateRepo(token, user);
+      const raw = await env.GOL_STATE.get("state");
+      const treeSha = raw ? JSON.parse(raw).treeSha : COMMIT_TREE;
       const cells = await fetchNaturalContributions(token, user);
       await env.GOL_STATE.put("state", JSON.stringify({ generation: 0, cells, treeSha }));
-      console.log(`Daily reset complete: reseeded with ${cells.filter(Boolean).length} alive cells, treeSha=${treeSha}`);
+      console.log(`Daily reseed: ${cells.filter(Boolean).length} alive cells.`);
     } else {
       // Per-minute GoL tick
       await runTick(env);
