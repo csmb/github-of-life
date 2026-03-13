@@ -157,8 +157,14 @@ async function forceUpdateRef(sha, token, user) {
 
 const GLIDER_SEED = (() => {
   const cells = new Array(COLS * ROWS).fill(false);
-  // A simple glider near the centre of the grid
-  [[25,1],[26,2],[24,3],[25,3],[26,3]].forEach(([c,r]) => { cells[idx(c,r)] = true; });
+  // Four SE-moving gliders evenly spaced — each travels rightward (forward in
+  // time on the contribution graph) 1 column every 4 generations.
+  // Pattern per glider: .O. / ..O / OOO  at (baseCol, baseRow)
+  [[5,0],[18,2],[31,4],[44,1]].forEach(([bc, br]) => {
+    [[1,0],[2,1],[0,2],[1,2],[2,2]].forEach(([dc,dr]) => {
+      cells[idx((bc+dc) % COLS, (br+dr) % ROWS)] = true;
+    });
+  });
   return cells;
 })();
 
