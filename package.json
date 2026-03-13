@@ -9,6 +9,6 @@
     "seed": "node seed.js"
   },
   "devDependencies": {
-    "wrangler": "^3.0.0"
+    "wrangler": "^4.71.0"
   }
 }
