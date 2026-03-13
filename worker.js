@@ -91,11 +91,11 @@ async function ghFetch(path, method, body, token) {
  * Creates a root commit (no parents) for the given date.
  * Returns the commit SHA.
  */
-async function createRootCommit(dateStr, token, user, treeSha) {
+async function createRootCommit(dateStr, token, user, userId, treeSha) {
   const dateISO = `${dateStr}T12:00:00Z`;
   const authorInfo = {
     name: user,
-    email: `${user}@users.noreply.github.com`,
+    email: `${userId}+${user}@users.noreply.github.com`,
     date: dateISO,
   };
   const data = await ghFetch(
@@ -117,11 +117,11 @@ async function createRootCommit(dateStr, token, user, treeSha) {
  * Creates a chained commit with one parent for the given date.
  * Returns the commit SHA.
  */
-async function createCommit(dateStr, parentSha, token, user, treeSha) {
+async function createCommit(dateStr, parentSha, token, user, userId, treeSha) {
   const dateISO = `${dateStr}T12:00:00Z`;
   const authorInfo = {
     name: user,
-    email: `${user}@users.noreply.github.com`,
+    email: `${userId}+${user}@users.noreply.github.com`,
     date: dateISO,
   };
   const data = await ghFetch(
@@ -269,6 +269,7 @@ async function fetchNaturalContributions(token, user) {
 async function runTick(env) {
   const token = env.GITHUB_TOKEN;
   const user = env.GITHUB_USER;
+  const { id: userId } = await ghFetch("/user", "GET", null, token);
 
   // 1. Load state
   const raw = await env.GOL_STATE.get("state");
@@ -306,9 +307,9 @@ async function runTick(env) {
     return;
   }
 
-  let sha = await createRootCommit(aliveDates[0], token, user, treeSha);
+  let sha = await createRootCommit(aliveDates[0], token, user, userId, treeSha);
   for (let i = 1; i < aliveDates.length; i++) {
-    sha = await createCommit(aliveDates[i], sha, token, user, treeSha);
+    sha = await createCommit(aliveDates[i], sha, token, user, userId, treeSha);
   }
   await forceUpdateRef(sha, token, user);
   console.log(`Generation ${state.generation + 1}: painted ${aliveDates.length} cells. HEAD=${sha}`);
