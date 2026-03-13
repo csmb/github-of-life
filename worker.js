@@ -163,6 +163,15 @@ const GLIDER_SEED = (() => {
 })();
 
 async function deleteAndRecreateRepo(token, user) {
+  // Preserve README before deletion
+  let readmeContent;
+  try {
+    const existing = await ghFetch(`/repos/${user}/${REPO}/contents/README.md`, "GET", null, token);
+    readmeContent = existing.content.replace(/\n/g, ""); // base64, strip newlines GitHub adds
+  } catch {
+    readmeContent = btoa("github-of-life: Conway's Game of Life on the GitHub contribution graph\n");
+  }
+
   // Delete — contribution credits are removed when the repo is gone
   await ghFetch(`/repos/${user}/${REPO}`, "DELETE", null, token);
   console.log("Repo deleted.");
@@ -176,11 +185,10 @@ async function deleteAndRecreateRepo(token, user) {
   }, token);
   console.log("Repo recreated.");
 
-  // Bootstrap main with README so the branch exists for force-push
-  const content = btoa("github-of-life: Conway's Game of Life on the GitHub contribution graph\n");
+  // Bootstrap main with preserved README so the branch exists for force-push
   const initResult = await ghFetch(`/repos/${user}/${REPO}/contents/README.md`, "PUT", {
     message: "GoL seed: initialize repo",
-    content,
+    content: readmeContent,
   }, token);
   const treeSha = initResult?.commit?.tree?.sha;
   console.log(`main branch initialized. tree=${treeSha}`);
