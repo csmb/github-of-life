@@ -156,8 +156,17 @@ async function forceUpdateRef(sha, token, user) {
 // Random seed
 // ---------------------------------------------------------------------------
 
-function randomSeed(density = 0.25) {
-  return Array.from({ length: COLS * ROWS }, () => Math.random() < density);
+// Guarantees at least one alive cell per column (full-year coverage) then
+// fills remaining cells to ~45% overall density.
+function randomSeed() {
+  const cells = new Array(COLS * ROWS).fill(false);
+  for (let col = 0; col < COLS; col++) {
+    cells[idx(col, Math.floor(Math.random() * ROWS))] = true;
+  }
+  for (let i = 0; i < cells.length; i++) {
+    if (!cells[i] && Math.random() < 0.37) cells[i] = true;
+  }
+  return cells;
 }
 
 async function deleteAndRecreateRepo(token, user, env) {
