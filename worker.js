@@ -7,7 +7,7 @@ const ROWS = 7;
 // Tree containing README.md — persists across all generated commits.
 // Recreate with: seed.js or the GitHub Git Data API if README changes.
 const COMMIT_TREE = "96d84c1ff3701775641c697390f25f3f59d4d16a";
-const REPO = "github-of-life";
+const REPO = "gol-graph";
 
 // ---------------------------------------------------------------------------
 // GoL logic
@@ -180,7 +180,7 @@ async function deleteAndRecreateRepo(token, user, env) {
     name: REPO,
     private: false,
     auto_init: false,
-    description: "Conway's Game of Life on the GitHub contribution graph",
+    description: "Conway's Game of Life — GitHub contribution graph animation",
   }, token);
   console.log("Repo recreated.");
 
