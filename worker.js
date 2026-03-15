@@ -255,20 +255,19 @@ async function runTick(env) {
   const newTreeSha = await deleteAndRecreateRepo(token, user, env);
   const activeSha = newTreeSha || treeSha;
 
+  const RESEED_THRESHOLD = 30;
   let cellsToPaint = nextCells;
   let nextGeneration = state.generation + 1;
-  if (aliveDates.length === 0) {
-    // Extinction — reseed and paint the seed directly (no blank frame, no tick die-off).
+  if (aliveDates.length < RESEED_THRESHOLD) {
+    // Too sparse — reseed and paint the seed directly (no blank frame, no tick die-off).
     cellsToPaint = randomSeed();
-    aliveDates.push(...(() => {
-      const dates = [];
-      for (let col = 0; col < COLS; col++)
-        for (let row = 0; row < ROWS; row++)
-          if (cellsToPaint[idx(col, row)]) dates.push(cellToDate(col, row));
-      return dates.sort();
-    })());
+    aliveDates.length = 0;
+    for (let col = 0; col < COLS; col++)
+      for (let row = 0; row < ROWS; row++)
+        if (cellsToPaint[idx(col, row)]) aliveDates.push(cellToDate(col, row));
+    aliveDates.sort();
     nextGeneration = 0;
-    console.log(`Extinction at gen ${state.generation + 1}. Reseeded with ${aliveDates.length} cells.`);
+    console.log(`Reseed at gen ${state.generation + 1} (${nextCells.filter(Boolean).length} alive < ${RESEED_THRESHOLD}). Painted ${aliveDates.length} cells.`);
   }
 
   // Create all date-commits in parallel (each parentless), then a single merge
