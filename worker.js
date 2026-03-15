@@ -156,16 +156,20 @@ async function forceUpdateRef(sha, token, user) {
 // Random seed
 // ---------------------------------------------------------------------------
 
-// Guarantees at least one alive cell per column (full-year coverage) then
-// fills remaining cells to ~45% overall density.
+// Places exactly 75 cells: one per column (52) + 23 random extras.
+// This is painted directly on extinction — not ticked first — so 75 commits
+// appear immediately rather than a ticked die-off.
 function randomSeed() {
   const cells = new Array(COLS * ROWS).fill(false);
   for (let col = 0; col < COLS; col++) {
     cells[idx(col, Math.floor(Math.random() * ROWS))] = true;
   }
-  for (let i = 0; i < cells.length; i++) {
-    if (!cells[i] && Math.random() < 0.37) cells[i] = true;
+  const spare = cells.reduce((a, v, i) => { if (!v) a.push(i); return a; }, []);
+  for (let i = spare.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [spare[i], spare[j]] = [spare[j], spare[i]];
   }
+  for (let i = 0; i < 23; i++) cells[spare[i]] = true;
   return cells;
 }
 
@@ -251,11 +255,20 @@ async function runTick(env) {
   const newTreeSha = await deleteAndRecreateRepo(token, user, env);
   const activeSha = newTreeSha || treeSha;
 
+  let cellsToPaint = nextCells;
+  let nextGeneration = state.generation + 1;
   if (aliveDates.length === 0) {
-    const reseeded = randomSeed();
-    await env.GOL_STATE.put("state", JSON.stringify({ generation: 0, cells: reseeded, treeSha: activeSha }));
-    console.log(`Extinction at gen ${state.generation + 1}. Reseeded randomly.`);
-    return;
+    // Extinction — reseed and paint the seed directly (no blank frame, no tick die-off).
+    cellsToPaint = randomSeed();
+    aliveDates.push(...(() => {
+      const dates = [];
+      for (let col = 0; col < COLS; col++)
+        for (let row = 0; row < ROWS; row++)
+          if (cellsToPaint[idx(col, row)]) dates.push(cellToDate(col, row));
+      return dates.sort();
+    })());
+    nextGeneration = 0;
+    console.log(`Extinction at gen ${state.generation + 1}. Reseeded with ${aliveDates.length} cells.`);
   }
 
   // Create all date-commits in parallel (each parentless), then a single merge
@@ -266,12 +279,12 @@ async function runTick(env) {
   );
   const mergeSha = await createMergeCommit(dateShas, token, user, userId, activeSha);
   await forceUpdateRef(mergeSha, token, user);
-  console.log(`Generation ${state.generation + 1}: painted ${aliveDates.length} cells. HEAD=${mergeSha}`);
+  console.log(`Generation ${nextGeneration}: painted ${aliveDates.length} cells. HEAD=${mergeSha}`);
 
   // 5. Persist next state
   await env.GOL_STATE.put(
     "state",
-    JSON.stringify({ generation: state.generation + 1, cells: nextCells, treeSha: activeSha })
+    JSON.stringify({ generation: nextGeneration, cells: cellsToPaint, treeSha: activeSha })
   );
 }
 
