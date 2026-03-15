@@ -152,21 +152,12 @@ async function forceUpdateRef(sha, token, user) {
 }
 
 // ---------------------------------------------------------------------------
-// Contribution-based seed
+// Random seed
 // ---------------------------------------------------------------------------
 
-const GLIDER_SEED = (() => {
-  const cells = new Array(COLS * ROWS).fill(false);
-  // Four SE-moving gliders evenly spaced — each travels rightward (forward in
-  // time on the contribution graph) 1 column every 4 generations.
-  // Pattern per glider: .O. / ..O / OOO  at (baseCol, baseRow)
-  [[5,0],[18,2],[31,4],[44,1]].forEach(([bc, br]) => {
-    [[1,0],[2,1],[0,2],[1,2],[2,2]].forEach(([dc,dr]) => {
-      cells[idx((bc+dc) % COLS, (br+dr) % ROWS)] = true;
-    });
-  });
-  return cells;
-})();
+function randomSeed(density = 0.25) {
+  return Array.from({ length: COLS * ROWS }, () => Math.random() < density);
+}
 
 async function deleteAndRecreateRepo(token, user) {
   // Preserve README before deletion
@@ -199,81 +190,6 @@ async function deleteAndRecreateRepo(token, user) {
   const treeSha = initResult?.commit?.tree?.sha;
   console.log(`main branch initialized. tree=${treeSha}`);
   return treeSha;
-}
-
-async function fetchNaturalContributions(token, user) {
-  const now = new Date();
-  const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  const todayDow = today.getUTCDay();
-  const weekStart = new Date(today);
-  weekStart.setUTCDate(today.getUTCDate() - todayDow);
-
-  const from = new Date(weekStart);
-  from.setUTCDate(weekStart.getUTCDate() - 51 * 7);
-  const to = new Date(weekStart);
-  to.setUTCDate(weekStart.getUTCDate() + 6);
-
-  const query = `
-    query($login: String!, $from: DateTime!, $to: DateTime!) {
-      user(login: $login) {
-        contributionsCollection(from: $from, to: $to) {
-          commitContributionsByRepository(maxRepositories: 100) {
-            repository { name }
-            contributions(first: 100) {
-              nodes { occurredAt commitCount }
-            }
-          }
-        }
-      }
-    }
-  `;
-
-  const res = await fetch("https://api.github.com/graphql", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-      "User-Agent": "github-of-life-worker",
-    },
-    body: JSON.stringify({
-      query,
-      variables: { login: user, from: from.toISOString(), to: to.toISOString() },
-    }),
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`GitHub GraphQL → ${res.status}: ${text}`);
-  }
-
-  const json = await res.json();
-  const repos = json?.data?.user?.contributionsCollection?.commitContributionsByRepository ?? [];
-
-  const cells = new Array(COLS * ROWS).fill(false);
-
-  for (const { repository, contributions } of repos) {
-    if (repository.name === "github-of-life") continue;
-    for (const { occurredAt, commitCount } of contributions.nodes) {
-      if (commitCount <= 0) continue;
-      const date = occurredAt.slice(0, 10); // "YYYY-MM-DD"
-      const dateMs = Date.UTC(
-        parseInt(date.slice(0, 4)),
-        parseInt(date.slice(5, 7)) - 1,
-        parseInt(date.slice(8, 10))
-      );
-      const dayOffset = Math.round((dateMs - weekStart.getTime()) / 86400000);
-      const col = 51 + Math.floor(dayOffset / 7);
-      const row = ((dayOffset % 7) + 7) % 7;
-      if (col >= 0 && col < COLS) cells[idx(col, row)] = true;
-    }
-  }
-
-  const aliveCount = cells.filter(Boolean).length;
-  if (aliveCount === 0) {
-    console.log("No contributions found — falling back to glider seed.");
-    return GLIDER_SEED.slice();
-  }
-  return cells;
 }
 
 // ---------------------------------------------------------------------------
@@ -316,14 +232,9 @@ async function runTick(env) {
   const activeSha = newTreeSha || treeSha;
 
   if (aliveDates.length === 0) {
-    // All cells dead — auto-reseed from natural contributions
-    console.log(`Generation ${state.generation + 1}: extinction. Reseeding...`);
-    const reseeded = await fetchNaturalContributions(token, user);
-    await env.GOL_STATE.put(
-      "state",
-      JSON.stringify({ generation: 0, cells: reseeded, treeSha: activeSha })
-    );
-    console.log(`Reseeded with ${reseeded.filter(Boolean).length} alive cells.`);
+    const reseeded = randomSeed();
+    await env.GOL_STATE.put("state", JSON.stringify({ generation: 0, cells: reseeded, treeSha: activeSha }));
+    console.log(`Extinction at gen ${state.generation + 1}. Reseeded randomly.`);
     return;
   }
 
@@ -337,22 +248,18 @@ async function runTick(env) {
   // 5. Persist next state
   await env.GOL_STATE.put(
     "state",
-    JSON.stringify({ generation: state.generation + 1, cells: nextCells, treeSha })
+    JSON.stringify({ generation: state.generation + 1, cells: nextCells, treeSha: activeSha })
   );
 }
 
 export default {
   async scheduled(event, env, ctx) {
     if (event.cron === "0 0 * * *") {
-      // Daily reseed: refresh GoL state from natural contributions.
-      // No need to delete the repo — each tick now does that for a clean slate.
-      const token = env.GITHUB_TOKEN;
-      const user = env.GITHUB_USER;
       const raw = await env.GOL_STATE.get("state");
       const treeSha = raw ? JSON.parse(raw).treeSha : COMMIT_TREE;
-      const cells = await fetchNaturalContributions(token, user);
+      const cells = randomSeed();
       await env.GOL_STATE.put("state", JSON.stringify({ generation: 0, cells, treeSha }));
-      console.log(`Daily reseed: ${cells.filter(Boolean).length} alive cells.`);
+      console.log(`Daily reseed: random, ~${cells.filter(Boolean).length} alive cells.`);
     } else {
       // Per-minute GoL tick
       await runTick(env);
