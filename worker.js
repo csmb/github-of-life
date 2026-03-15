@@ -114,23 +114,24 @@ async function createRootCommit(dateStr, token, user, userId, treeSha) {
 }
 
 /**
- * Creates a chained commit with one parent for the given date.
- * Returns the commit SHA.
+ * Creates a merge commit whose parents are all the per-date commits.
+ * This lets us create date commits in parallel, then point the branch at
+ * this single hub commit — all parents are reachable and count as contributions.
  */
-async function createCommit(dateStr, parentSha, token, user, userId, treeSha) {
-  const dateISO = `${dateStr}T12:00:00Z`;
+async function createMergeCommit(parentShas, token, user, userId, treeSha) {
+  const now = new Date().toISOString();
   const authorInfo = {
     name: user,
     email: `${userId}+${user}@users.noreply.github.com`,
-    date: dateISO,
+    date: now,
   };
   const data = await ghFetch(
     `/repos/${user}/${REPO}/git/commits`,
     "POST",
     {
-      message: `GoL alive cell ${dateStr}`,
+      message: `GoL generation`,
       tree: treeSha,
-      parents: [parentSha],
+      parents: parentShas,
       author: authorInfo,
       committer: authorInfo,
     },
@@ -160,18 +161,23 @@ function randomSeed(density = 0.25) {
 }
 
 async function deleteAndRecreateRepo(token, user) {
-  // Preserve README before deletion
+  // Always read README from the source branch — canonical, persists across deletions.
   let readmeContent;
   try {
-    const existing = await ghFetch(`/repos/${user}/${REPO}/contents/README.md`, "GET", null, token);
+    const existing = await ghFetch(`/repos/${user}/${REPO}/contents/README.md?ref=source`, "GET", null, token);
     readmeContent = existing.content.replace(/\n/g, ""); // base64, strip newlines GitHub adds
   } catch {
-    readmeContent = btoa("github-of-life: Conway's Game of Life on the GitHub contribution graph\n");
+    readmeContent = btoa("# github-of-life\n\nConway's Game of Life on the GitHub contribution graph.\n");
   }
 
   // Delete — contribution credits are removed when the repo is gone
-  await ghFetch(`/repos/${user}/${REPO}`, "DELETE", null, token);
-  console.log("Repo deleted.");
+  try {
+    await ghFetch(`/repos/${user}/${REPO}`, "DELETE", null, token);
+    console.log("Repo deleted.");
+  } catch (e) {
+    if (!e.message.includes("404")) throw e;
+    console.log("Repo already gone, skipping delete.");
+  }
 
   // Recreate
   await ghFetch("/user/repos", "POST", {
@@ -238,12 +244,15 @@ async function runTick(env) {
     return;
   }
 
-  let sha = await createRootCommit(aliveDates[0], token, user, userId, activeSha);
-  for (let i = 1; i < aliveDates.length; i++) {
-    sha = await createCommit(aliveDates[i], sha, token, user, userId, activeSha);
-  }
-  await forceUpdateRef(sha, token, user);
-  console.log(`Generation ${state.generation + 1}: painted ${aliveDates.length} cells. HEAD=${sha}`);
+  // Create all date-commits in parallel (each parentless), then a single merge
+  // commit pointing to all of them. forceUpdateRef takes ~2s total instead of
+  // N×340ms sequentially.
+  const dateShas = await Promise.all(
+    aliveDates.map(date => createRootCommit(date, token, user, userId, activeSha))
+  );
+  const mergeSha = await createMergeCommit(dateShas, token, user, userId, activeSha);
+  await forceUpdateRef(mergeSha, token, user);
+  console.log(`Generation ${state.generation + 1}: painted ${aliveDates.length} cells. HEAD=${mergeSha}`);
 
   // 5. Persist next state
   await env.GOL_STATE.put(
