@@ -2,7 +2,7 @@
 
 Conway's Game of Life, animated on the GitHub contribution graph.
 
-![Conway's Game of Life on the GitHub contribution graph](https://raw.githubusercontent.com/csmb/github-of-life/source/contribution-graph.gif)
+![Conway's Game of Life on the GitHub contribution graph](contribution-graph.gif)
 
 ## How it works
 

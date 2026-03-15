@@ -160,15 +160,11 @@ function randomSeed(density = 0.25) {
   return Array.from({ length: COLS * ROWS }, () => Math.random() < density);
 }
 
-async function deleteAndRecreateRepo(token, user) {
-  // Always read README from the source branch — canonical, persists across deletions.
-  let readmeContent;
-  try {
-    const existing = await ghFetch(`/repos/${user}/${REPO}/contents/README.md?ref=source`, "GET", null, token);
-    readmeContent = existing.content.replace(/\n/g, ""); // base64, strip newlines GitHub adds
-  } catch {
-    readmeContent = btoa("# github-of-life\n\nConway's Game of Life on the GitHub contribution graph.\n");
-  }
+async function deleteAndRecreateRepo(token, user, env) {
+  // README and GIF are stored in KV so they survive repo deletion.
+  const readmeContent = await env.GOL_STATE.get("readme") ??
+    btoa("# github-of-life\n\nConway's Game of Life on the GitHub contribution graph.\n");
+  const gifContent = await env.GOL_STATE.get("gif"); // base64-encoded GIF, may be null
 
   // Delete — contribution credits are removed when the repo is gone
   try {
@@ -188,11 +184,20 @@ async function deleteAndRecreateRepo(token, user) {
   }, token);
   console.log("Repo recreated.");
 
-  // Bootstrap main with preserved README so the branch exists for force-push
+  // Push README (creates the main branch)
   const initResult = await ghFetch(`/repos/${user}/${REPO}/contents/README.md`, "PUT", {
     message: "GoL seed: initialize repo",
     content: readmeContent,
   }, token);
+
+  // Push GIF alongside README if we have it
+  if (gifContent) {
+    await ghFetch(`/repos/${user}/${REPO}/contents/contribution-graph.gif`, "PUT", {
+      message: "GoL seed: add gif",
+      content: gifContent,
+    }, token);
+  }
+
   const treeSha = initResult?.commit?.tree?.sha;
   console.log(`main branch initialized. tree=${treeSha}`);
   return treeSha;
@@ -234,7 +239,7 @@ async function runTick(env) {
   // Force-pushing orphans old commits but GitHub keeps crediting them until
   // the repo is deleted — so we delete every tick to ensure dead cells truly
   // disappear from the contribution graph.
-  const newTreeSha = await deleteAndRecreateRepo(token, user);
+  const newTreeSha = await deleteAndRecreateRepo(token, user, env);
   const activeSha = newTreeSha || treeSha;
 
   if (aliveDates.length === 0) {
