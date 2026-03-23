@@ -8,7 +8,7 @@ const ROWS = 7;
 // Recreate with: seed.js or the GitHub Git Data API if README changes.
 const COMMIT_TREE = "96d84c1ff3701775641c697390f25f3f59d4d16a";
 const REPO = "gol-graph";
-const COMMITS_PER_CELL = 4; // multiple commits per date → darker green squares
+const COMMITS_PER_CELL = 3; // multiple commits per date → darker green squares
 
 // ---------------------------------------------------------------------------
 // GoL logic
