@@ -1,5 +1,5 @@
 // Conway's Game of Life — Cloudflare Worker
-// Runs every 5 minutes via cron trigger.
+// Runs every 5 minutes via cron trigger (rate-limited by GitHub API at 5k req/hr).
 // Reads state from KV, ticks GoL, rewrites github-of-life commit history.
 
 const COLS = 52;
