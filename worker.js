@@ -157,9 +157,8 @@ async function forceUpdateRef(sha, token, user) {
 // Random seed
 // ---------------------------------------------------------------------------
 
-// Places exactly 200 cells: one per column (52) + 148 random extras.
-// This is painted directly on reseed — not ticked first — so 200 commits
-// appear immediately rather than a ticked die-off.
+// Places exactly 120 cells: one per column (52) + 68 random extras.
+// ~33% density — sweet spot for GoL stability and visual coverage.
 function randomSeed() {
   const cells = new Array(COLS * ROWS).fill(false);
   for (let col = 0; col < COLS; col++) {
@@ -170,7 +169,7 @@ function randomSeed() {
     const j = Math.floor(Math.random() * (i + 1));
     [spare[i], spare[j]] = [spare[j], spare[i]];
   }
-  for (let i = 0; i < 148; i++) cells[spare[i]] = true;
+  for (let i = 0; i < 68; i++) cells[spare[i]] = true;
   return cells;
 }
 
