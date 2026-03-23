@@ -8,6 +8,7 @@ const ROWS = 7;
 // Recreate with: seed.js or the GitHub Git Data API if README changes.
 const COMMIT_TREE = "96d84c1ff3701775641c697390f25f3f59d4d16a";
 const REPO = "gol-graph";
+const COMMITS_PER_CELL = 4; // multiple commits per date → darker green squares
 
 // ---------------------------------------------------------------------------
 // GoL logic
@@ -156,8 +157,8 @@ async function forceUpdateRef(sha, token, user) {
 // Random seed
 // ---------------------------------------------------------------------------
 
-// Places exactly 100 cells: one per column (52) + 48 random extras.
-// This is painted directly on reseed — not ticked first — so 100 commits
+// Places exactly 200 cells: one per column (52) + 148 random extras.
+// This is painted directly on reseed — not ticked first — so 200 commits
 // appear immediately rather than a ticked die-off.
 function randomSeed() {
   const cells = new Array(COLS * ROWS).fill(false);
@@ -169,7 +170,7 @@ function randomSeed() {
     const j = Math.floor(Math.random() * (i + 1));
     [spare[i], spare[j]] = [spare[j], spare[i]];
   }
-  for (let i = 0; i < 48; i++) cells[spare[i]] = true;
+  for (let i = 0; i < 148; i++) cells[spare[i]] = true;
   return cells;
 }
 
@@ -270,11 +271,14 @@ async function runTick(env) {
     console.log(`Reseed at gen ${state.generation + 1} (${nextCells.filter(Boolean).length} alive < ${RESEED_THRESHOLD}). Painted ${aliveDates.length} cells.`);
   }
 
-  // Create all date-commits in parallel (each parentless), then a single merge
-  // commit pointing to all of them. forceUpdateRef takes ~2s total instead of
-  // N×340ms sequentially.
+  // Create multiple commits per date for darker green squares, then a single
+  // merge commit pointing to all of them.
   const dateShas = await Promise.all(
-    aliveDates.map(date => createRootCommit(date, token, user, userId, activeSha))
+    aliveDates.flatMap(date =>
+      Array.from({ length: COMMITS_PER_CELL }, () =>
+        createRootCommit(date, token, user, userId, activeSha)
+      )
+    )
   );
   const mergeSha = await createMergeCommit(dateShas, token, user, userId, activeSha);
   await forceUpdateRef(mergeSha, token, user);
@@ -294,7 +298,7 @@ export default {
       const treeSha = raw ? JSON.parse(raw).treeSha : COMMIT_TREE;
       const cells = randomSeed();
       await env.GOL_STATE.put("state", JSON.stringify({ generation: 0, cells, treeSha }));
-      console.log(`Daily reseed: random, ~${cells.filter(Boolean).length} alive cells.`);
+      console.log(`Daily reseed: random, ~${cells.filter(Boolean).length} alive cells (${cells.filter(Boolean).length * COMMITS_PER_CELL} commits).`);
     } else {
       // Per-minute GoL tick
       await runTick(env);
