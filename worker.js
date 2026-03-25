@@ -1,6 +1,6 @@
 // Conway's Game of Life — Cloudflare Worker
 // Runs every 5 minutes via cron trigger (rate-limited by GitHub API at 5k req/hr).
-// Reads state from KV, ticks GoL, rewrites github-of-life commit history.
+// Reads state from KV, ticks GoL, force-pushes a fresh linear commit chain to gol-graph.
 
 const COLS = 52;
 const ROWS = 7;
@@ -89,10 +89,11 @@ async function ghFetch(path, method, body, token) {
 }
 
 /**
- * Creates a root commit (no parents) for the given date.
- * Returns the commit SHA.
+ * Creates a commit for the given date, chained to parentSha.
+ * Linear chain ensures GitHub counts each commit as a contribution.
+ * Returns the new commit SHA.
  */
-async function createRootCommit(dateStr, token, user, userId, treeSha) {
+async function createCommit(dateStr, parentSha, token, user, userId, treeSha) {
   const dateISO = `${dateStr}T12:00:00Z`;
   const authorInfo = {
     name: user,
@@ -105,34 +106,7 @@ async function createRootCommit(dateStr, token, user, userId, treeSha) {
     {
       message: `GoL alive cell ${dateStr}`,
       tree: treeSha,
-      parents: [],
-      author: authorInfo,
-      committer: authorInfo,
-    },
-    token
-  );
-  return data.sha;
-}
-
-/**
- * Creates a merge commit whose parents are all the per-date commits.
- * This lets us create date commits in parallel, then point the branch at
- * this single hub commit — all parents are reachable and count as contributions.
- */
-async function createMergeCommit(parentShas, token, user, userId, treeSha) {
-  const now = new Date().toISOString();
-  const authorInfo = {
-    name: user,
-    email: `${userId}+${user}@users.noreply.github.com`,
-    date: now,
-  };
-  const data = await ghFetch(
-    `/repos/${user}/${REPO}/git/commits`,
-    "POST",
-    {
-      message: `GoL generation`,
-      tree: treeSha,
-      parents: parentShas,
+      parents: [parentSha],
       author: authorInfo,
       committer: authorInfo,
     },
@@ -173,46 +147,47 @@ function randomSeed() {
   return cells;
 }
 
-async function deleteAndRecreateRepo(token, user, env) {
-  // README and GIF are stored in KV so they survive repo deletion.
-  const readmeContent = await env.GOL_STATE.get("readme") ??
-    btoa("# github-of-life\n\nConway's Game of Life on the GitHub contribution graph.\n");
-  const gifContent = await env.GOL_STATE.get("gif"); // base64-encoded GIF, may be null
-
-  // Delete — contribution credits are removed when the repo is gone
+/**
+ * Creates the repo if it doesn't exist. Returns the tree SHA.
+ * We no longer delete/recreate every tick — force-pushing new history
+ * is enough. GitHub removes contribution credit for unreachable commits.
+ */
+async function ensureRepoExists(token, user, env) {
   try {
-    await ghFetch(`/repos/${user}/${REPO}`, "DELETE", null, token);
-    console.log("Repo deleted.");
+    await ghFetch(`/repos/${user}/${REPO}`, "GET", null, token);
+    return null; // already exists
   } catch (e) {
     if (!e.message.includes("404")) throw e;
-    console.log("Repo already gone, skipping delete.");
   }
 
-  // Recreate
+  // Create from scratch
   await ghFetch("/user/repos", "POST", {
     name: REPO,
     private: false,
     auto_init: false,
     description: "Conway's Game of Life — GitHub contribution graph animation",
   }, token);
-  console.log("Repo recreated.");
+  console.log("Repo created.");
 
-  // Push README (creates the main branch)
+  const readmeContent = await env.GOL_STATE.get("readme") ??
+    btoa("# github-of-life\n\nConway's Game of Life on the GitHub contribution graph.\n");
   const initResult = await ghFetch(`/repos/${user}/${REPO}/contents/README.md`, "PUT", {
     message: "GoL seed: initialize repo",
     content: readmeContent,
   }, token);
 
-  // Push GIF alongside README if we have it
+  let treeSha = initResult?.commit?.tree?.sha;
+
+  const gifContent = await env.GOL_STATE.get("gif");
   if (gifContent) {
-    await ghFetch(`/repos/${user}/${REPO}/contents/contribution-graph.gif`, "PUT", {
+    const gifResult = await ghFetch(`/repos/${user}/${REPO}/contents/contribution-graph.gif`, "PUT", {
       message: "GoL seed: add gif",
       content: gifContent,
     }, token);
+    treeSha = gifResult?.commit?.tree?.sha;
   }
 
-  const treeSha = initResult?.commit?.tree?.sha;
-  console.log(`main branch initialized. tree=${treeSha}`);
+  console.log(`Repo initialized. tree=${treeSha}`);
   return treeSha;
 }
 
@@ -248,12 +223,9 @@ async function runTick(env) {
   }
   aliveDates.sort();
 
-  // 4. Delete and recreate repo for a clean slate, then push alive cells.
-  // Force-pushing orphans old commits but GitHub keeps crediting them until
-  // the repo is deleted — so we delete every tick to ensure dead cells truly
-  // disappear from the contribution graph.
-  const newTreeSha = await deleteAndRecreateRepo(token, user, env);
-  const activeSha = newTreeSha || treeSha;
+  // 4. Ensure repo exists (create only if missing — no more delete/recreate).
+  const newTreeSha = await ensureRepoExists(token, user, env);
+  const activeTree = newTreeSha || treeSha;
 
   const RESEED_THRESHOLD = 30;
   let cellsToPaint = nextCells;
@@ -270,23 +242,39 @@ async function runTick(env) {
     console.log(`Reseed at gen ${state.generation + 1} (${nextCells.filter(Boolean).length} alive < ${RESEED_THRESHOLD}). Painted ${aliveDates.length} cells.`);
   }
 
-  // Create multiple commits per date for darker green squares, then a single
-  // merge commit pointing to all of them.
-  const dateShas = await Promise.all(
-    aliveDates.flatMap(date =>
-      Array.from({ length: COMMITS_PER_CELL }, () =>
-        createRootCommit(date, token, user, userId, activeSha)
-      )
-    )
+  // Build a fresh linear chain: orphan root → GoL commits.
+  // Force-pushing replaces history — GitHub drops contribution credit
+  // for unreachable commits, so dead cells fade from the graph.
+  const now = new Date().toISOString();
+  const authorBase = {
+    name: user,
+    email: `${userId}+${user}@users.noreply.github.com`,
+  };
+  const rootData = await ghFetch(
+    `/repos/${user}/${REPO}/git/commits`, "POST",
+    {
+      message: "GoL base",
+      tree: activeTree,
+      parents: [],
+      author: { ...authorBase, date: now },
+      committer: { ...authorBase, date: now },
+    },
+    token
   );
-  const mergeSha = await createMergeCommit(dateShas, token, user, userId, activeSha);
-  await forceUpdateRef(mergeSha, token, user);
-  console.log(`Generation ${nextGeneration}: painted ${aliveDates.length} cells. HEAD=${mergeSha}`);
+  let parentSha = rootData.sha;
+
+  for (const date of aliveDates) {
+    for (let i = 0; i < COMMITS_PER_CELL; i++) {
+      parentSha = await createCommit(date, parentSha, token, user, userId, activeTree);
+    }
+  }
+  await forceUpdateRef(parentSha, token, user);
+  console.log(`Generation ${nextGeneration}: painted ${aliveDates.length} cells (${aliveDates.length * COMMITS_PER_CELL} commits). HEAD=${parentSha}`);
 
   // 5. Persist next state
   await env.GOL_STATE.put(
     "state",
-    JSON.stringify({ generation: nextGeneration, cells: cellsToPaint, treeSha: activeSha })
+    JSON.stringify({ generation: nextGeneration, cells: cellsToPaint, treeSha: activeTree })
   );
 }
 
