@@ -93,11 +93,11 @@ async function ghFetch(path, method, body, token) {
  * Linear chain ensures GitHub counts each commit as a contribution.
  * Returns the new commit SHA.
  */
-async function createCommit(dateStr, parentSha, token, user, userId, treeSha) {
+async function createCommit(dateStr, parentSha, token, user, email, treeSha) {
   const dateISO = `${dateStr}T12:00:00Z`;
   const authorInfo = {
     name: user,
-    email: `${userId}+${user}@users.noreply.github.com`,
+    email,
     date: dateISO,
   };
   const data = await ghFetch(
@@ -198,7 +198,12 @@ async function ensureRepoExists(token, user, env) {
 async function runTick(env) {
   const token = env.GITHUB_TOKEN;
   const user = env.GITHUB_USER;
-  const { id: userId } = await ghFetch("/user", "GET", null, token);
+  const userInfo = await ghFetch("/user", "GET", null, token);
+  const userId = userInfo.id;
+
+  // Use the same email as the user's real commits so contributions count.
+  // The noreply email may not be enabled in account settings.
+  const commitEmail = env.GITHUB_EMAIL || `${userId}+${user}@users.noreply.github.com`;
 
   // 1. Load state
   const raw = await env.GOL_STATE.get("state");
@@ -248,7 +253,7 @@ async function runTick(env) {
   const now = new Date().toISOString();
   const authorBase = {
     name: user,
-    email: `${userId}+${user}@users.noreply.github.com`,
+    email: commitEmail,
   };
   const rootData = await ghFetch(
     `/repos/${user}/${REPO}/git/commits`, "POST",
@@ -265,7 +270,7 @@ async function runTick(env) {
 
   for (const date of aliveDates) {
     for (let i = 0; i < COMMITS_PER_CELL; i++) {
-      parentSha = await createCommit(date, parentSha, token, user, userId, activeTree);
+      parentSha = await createCommit(date, parentSha, token, user, commitEmail, activeTree);
     }
   }
   await forceUpdateRef(parentSha, token, user);
